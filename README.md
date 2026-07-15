@@ -59,7 +59,6 @@ Detaljne upute korak-po-korak: **`docs/SETUP.md`**.
 
 ## Pravila rada (nepregovorljivo)
 
-1. **Demo prvo.** Mod `live` se uključuje tek nakon **4+ sedmice i 50+ signala** na IG demo nalogu sa pozitivnom statistikom.
 2. **Kill switch** (lijevi sidebar) trenutno zaustavlja otvaranje novih pozicija.
 3. Dnevni max gubitak (default 3%) automatski pauzira bota do sutra.
 4. Signali sa "chasing" upozorenjima dobijaju pola lota ili se preskaču — kanal sam priznaje loše ulaze.
