@@ -13,7 +13,7 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import anthropic
 from dotenv import load_dotenv
@@ -119,17 +119,24 @@ def call_claude(client: anthropic.Anthropic, model: str, max_tokens: int, raw_te
     return None
 
 
-def find_referenced_signal(provider: str | None) -> dict | None:
-    """Za update/tp_hit poruke: zadnji new_signal istog provajdera u zadnja 24h."""
+def find_referenced_signal(provider: str | None, symbol: str | None) -> dict | None:
+    """Za update/tp_hit poruke: zadnji new_signal istog provajdera, ISTOG simbola,
+    u zadnjih 24h. Bez ovoga bi follow-up poruka mogla zakaciti pogresan (drugi
+    simbol) ili prestar signal — executor bi onda azurirao/zatvorio pogresnu poziciju.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     q = (
         sb().table("parsed_signals")
-        .select("id,decision,tps,entry_low,entry_high,direction")
+        .select("id,decision,tps,entry_low,entry_high,direction,symbol")
         .eq("message_type", "new_signal")
+        .gte("created_at", cutoff)
         .order("created_at", desc=True)
         .limit(1)
     )
     if provider:
         q = q.eq("provider", provider)
+    if symbol:
+        q = q.eq("symbol", symbol)
     rows = q.execute().data or []
     return rows[0] if rows else None
 
@@ -201,7 +208,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
 
     ref = None
     if parsed["message_type"] in ("update_sl", "tp_hit", "move_to_be", "close", "partial_close"):
-        ref = find_referenced_signal(provider)
+        ref = find_referenced_signal(provider, parsed.get("symbol"))
 
     decision, reason = decide(parsed, settings, provider)
 

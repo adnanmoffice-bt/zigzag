@@ -275,15 +275,28 @@ def handle_followup(signal: dict, settings: dict) -> None:
         notify(f"✏️ <b>SL ažuriran</b> na {new_sl} ({len(positions)} pozicija).")
 
     elif mtype in ("close", "partial_close"):
-        to_close = positions if mtype == "close" else positions[: max(len(positions) // 2, 1)]
-        for p in to_close:
+        # close: cijela noga se zatvara. partial_close: POLA VOLUMENA svake noge
+        # (ne pola broja nogu) — kanal cesto trazi "close half" na SVAKOJ otvorenoj
+        # poziciji, ne da se ostavi cijela noga otvorena a druga potpuno zatvorena.
+        lot_floor = float(settings["risk"]["lot_floor"])
+        to_close: list[tuple[object, float]] = []
+        for p in positions:
+            if mtype == "close":
+                to_close.append((p, p.volume))
+                continue
+            half = math.floor((p.volume / 2) * 100) / 100.0  # floor na 0.01 — nikad round-up
+            if half >= lot_floor:
+                to_close.append((p, half))
+            # ako je pola ispod minimalnog lota, ta noga se ne dijeli — ostaje puna dalje
+
+        for p, vol in to_close:
             tick = mt5.symbol_info_tick(symbol)
             price = tick.bid if p.type == mt5.POSITION_TYPE_BUY else tick.ask
             mt5.order_send({
                 "action": mt5.TRADE_ACTION_DEAL,
                 "position": p.ticket,
                 "symbol": symbol,
-                "volume": p.volume,
+                "volume": vol,
                 "type": mt5.ORDER_TYPE_SELL if p.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY,
                 "price": price,
                 "deviation": 30,
@@ -291,8 +304,13 @@ def handle_followup(signal: dict, settings: dict) -> None:
                 "comment": p.comment,
                 "type_filling": mt5.ORDER_FILLING_FOK,
             })
-        log(f"Zatvoreno {len(to_close)} pozicija ({mtype})", level="trade", category="executor", meta={"ref": ref_id})
-        notify(f"📕 <b>Zatvoreno</b> {len(to_close)} pozicija po instrukciji sa kanala.")
+        if mtype == "close":
+            log(f"Zatvoreno {len(to_close)} pozicija (close)", level="trade", category="executor", meta={"ref": ref_id})
+            notify(f"📕 <b>Zatvoreno</b> {len(to_close)} pozicija po instrukciji sa kanala.")
+        else:
+            log(f"Djelimicno zatvoreno (pola volumena) na {len(to_close)}/{len(positions)} pozicija",
+                level="trade", category="executor", meta={"ref": ref_id})
+            notify(f"📕 <b>Djelimično zatvoreno</b> — pola volumena na {len(to_close)} od {len(positions)} pozicija.")
 
 
 def sync_closed_positions(settings: dict) -> None:
