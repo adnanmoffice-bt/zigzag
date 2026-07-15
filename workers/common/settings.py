@@ -11,7 +11,10 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "breakeven_after_tp1": True, "split_equal_per_tp": True,
         "lot_floor": 0.01, "lot_cap": 1.0,
     },
-    "mt5": {"login": "", "server": "IG-Live2", "symbol": "XAUUSD", "symbol_suffix": ""},
+    "mt5": {
+        "login": "", "server": "IG-Live2", "symbol": "XAUUSD", "symbol_suffix": "",
+        "metaapi_account_id": "",  # popunjava metaapi_provision.py, veza ka MetaApi.cloud resursu
+    },
     "telegram": {"api_id": "", "api_hash": "", "channel_id": "", "bot_token": "", "notify_chat_id": ""},
     "anthropic": {"model": "claude-sonnet-4-6", "max_tokens": 1024},
     "external_signals": {"text_column": "raw_text", "provider_column": "sender", "status_column": "parse_status"},

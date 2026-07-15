@@ -1,11 +1,11 @@
 # ZigZag — XAUUSD Signal Autotrader
 
 Automatizovani sistem koji čita trading signale sa privatnog Telegram kanala, parsira ih Claude-om,
-izvršava na MetaTrader 5 (IG broker) i sve prikazuje na live dashboardu — uz Telegram notifikacije
-o svakoj akciji.
+izvršava na MetaTrader 5 (IG broker, preko MetaApi.cloud bridge-a) i sve prikazuje na live dashboardu
+— uz Telegram notifikacije o svakoj akciji.
 
 ```
-[Telegram kanal] → [Listener] → [Supabase] → [Claude parser] → [MT5 Executor (Windows VPS)]
+[Telegram kanal] → [Listener] → [Supabase] → [Claude parser] → [MT5 Executor → MetaApi.cloud → IG]
                                      │
                                      ├──→ [React dashboard @ Vercel]
                                      └──→ [Telegram notifikacije tebi]
@@ -18,7 +18,7 @@ o svakoj akciji.
 | `dashboard/` | React + Vite + Tailwind dashboard (Stripe stil) | Vercel |
 | `workers/listener/` | Telethon listener — čita kanal → `external_signals` | Railway / Fly.io / VPS (Linux OK) |
 | `workers/parser/` | Claude parser — `external_signals` → `parsed_signals` + odluka | Isti host kao listener |
-| `workers/executor/` | MT5 izvršenje — otvara/ažurira pozicije, risk pravila | **SAMO Windows VPS** |
+| `workers/executor/` | MT5 izvršenje (preko MetaApi.cloud) — otvara/ažurira pozicije, risk pravila | Bilo koji host (Linux OK — ne treba Windows/desktop MT5) |
 | `workers/backfill/` | Istorija kanala + statistika provajdera | Jednokratno / cron |
 | `supabase/migrations/` | SQL schema (tabele, RLS, realtime, default postavke) | Supabase SQL Editor |
 | `docs/` | Setup, arhitektura, roadmap za nastavak razvoja | — |
@@ -40,10 +40,11 @@ o svakoj akciji.
    python -m listener.telegram_listener  # proces 1
    python -m parser.claude_parser        # proces 2
    ```
-5. **Executor (Windows VPS):** instaliraj MT5, prijavi se na **IG-Demo** nalog, uključi
-   *Allow automated trading*, pa:
+5. **Executor (bilo koji host):** MetaApi.cloud hostuje MT5 terminal konekciju — ne treba desktop
+   instalacija ni Windows VPS. Uzmi token na **app.metaapi.cloud/token** → `workers/.env` →
+   `METAAPI_TOKEN`, popuni `bot_settings.mt5.login/server` (IG-Demo nalog za početak), pa:
    ```bash
-   pip install -r requirements.txt MetaTrader5
+   python -m executor.metaapi_provision   # jednokratno — kreira MetaApi nalog resurs
    python -m executor.mt5_executor
    ```
 6. **Deploy dashboarda:** pushaj repo na GitHub → Vercel → *Import project* → root `dashboard/` →
@@ -53,7 +54,7 @@ Detaljne upute korak-po-korak: **`docs/SETUP.md`**.
 
 ## Ključna sigurnosna pravila
 
-- `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`, `MT5_PASSWORD`, `TELEGRAM_SESSION_STRING` žive **samo u `.env` na serverima** — nikad u git, nikad u dashboard.
+- `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`, `MT5_PASSWORD`, `METAAPI_TOKEN`, `TELEGRAM_SESSION_STRING` žive **samo u `.env` na serverima** — nikad u git, nikad u dashboard.
 - Dashboard koristi **anon (publishable) ključ + login** — RLS u bazi štiti podatke.
 - `.session` fajlovi i `.env` su u `.gitignore` — ne diraj to.
 

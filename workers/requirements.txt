@@ -1,7 +1,11 @@
-supabase==2.7.4
+supabase==2.31.0
 telethon==1.36.0
 anthropic==0.40.0
 python-dotenv==1.0.1
 requests==2.32.3
-# Samo na Windows VPS-u (executor):
+# Executor koristi MetaApi.cloud (radi na bilo kom hostu, ne treba Windows/desktop MT5):
+metaapi-cloud-sdk==29.1.1
+# supabase>=2.28 i metaapi-cloud-sdk oba traze httpx>=0.28 — ova dva paketa MORAJU
+# se instalirati zajedno (stariji supabase==2.7.4 trazi httpx<0.28, sudar verzija).
+# Alternativa ako se ikad prebaci na lokalni desktop MT5 terminal (samo Windows):
 # MetaTrader5==5.0.4522

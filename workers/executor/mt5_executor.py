@@ -1,27 +1,31 @@
 """
-ZigZag — MT5 executor (SAMO Windows VPS)
-========================================
-Cita parsed_signals sa decision='execute', otvara/azurira pozicije na MT5 (IG),
-primjenjuje risk pravila i upisuje sve nazad u Supabase.
+ZigZag — MT5 executor (MetaApi.cloud bridge — radi na bilo kom hostu)
+======================================================================
+Cita parsed_signals sa decision='execute', otvara/azurira pozicije preko
+MetaApi.cloud (koji hostuje MT5 terminal konekciju ka IG brokeru), primjenjuje
+risk pravila i upisuje sve nazad u Supabase.
 
 Pokretanje:  python -m executor.mt5_executor      (iz workers/ direktorija)
 
-Preduslovi na VPS-u:
-  pip install MetaTrader5
-  MT5 terminal instaliran, prijavljen na IG-Demo/IG-Live2,
-  Tools -> Options -> Expert Advisors -> "Allow automated trading" ukljuceno.
+Preduslovi:
+  1) python -m executor.metaapi_provision   (jednokratno — kreira MetaApi nalog)
+  2) .env: METAAPI_TOKEN (app.metaapi.cloud/token), MT5_PASSWORD
+  3) bot_settings.mt5: login, server, metaapi_account_id (popuni provisioning skript)
 
 XAUUSD matematika (IG): 1 lot = 100 oz; kretanje $1.00 = $100 po lotu.
   lot = rizik_$ / (SL_distance_$ * 100)
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import os
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from dotenv import load_dotenv
+from metaapi_cloud_sdk import MetaApi
 
 from common.db import sb
 from common.log import heartbeat, log
@@ -30,24 +34,45 @@ from common.settings import get_settings, kill_switch_on
 
 load_dotenv()
 
-try:
-    import MetaTrader5 as mt5  # type: ignore
-except ImportError:  # omoguci import/test na Linuxu
-    mt5 = None
-
 POLL_SECONDS = 3
 EQUITY_SNAPSHOT_EVERY = 300  # 5 min
 MAGIC_BASE = 777000  # magic = MAGIC_BASE + tp_index
 
+# stringCode vrijednosti koje MetaApi smatra uspjehom (vidi MetatraderTradeResponse)
+TRADE_SUCCESS_CODES = {"ERR_NO_ERROR", "TRADE_RETCODE_PLACED", "TRADE_RETCODE_DONE",
+                       "TRADE_RETCODE_DONE_PARTIAL", "TRADE_RETCODE_NO_CHANGES"}
 
-# ---------------------------------------------------------------- MT5 osnove
-def mt5_connect(settings: dict) -> bool:
+
+# ---------------------------------------------------------------- MetaApi osnove
+async def mt5_connect(settings: dict) -> Any | None:
+    """Poveze se na MetaApi.cloud (cloud-hosted MT5 terminal) — vraca streaming
+    connection ili None. Za razliku od lokalnog MetaTrader5 paketa, ovo radi na
+    bilo kom hostu (Linux, Windows, Mac) — MetaApi izvodi stvarnu konekciju ka
+    IG brokeru u svojoj infrastrukturi.
+    """
     cfg = settings["mt5"]
-    password = os.environ.get("MT5_PASSWORD", "")
-    if not mt5.initialize(login=int(cfg["login"]), server=cfg["server"], password=password):
-        log(f"MT5 initialize neuspješan: {mt5.last_error()}", level="error", category="executor")
-        return False
-    return True
+    token = os.environ.get("METAAPI_TOKEN", "")
+    account_id = cfg.get("metaapi_account_id")
+    if not token:
+        log("METAAPI_TOKEN nije postavljen u .env (app.metaapi.cloud/token).", level="error", category="executor")
+        return None
+    if not account_id:
+        log("bot_settings.mt5.metaapi_account_id nije postavljen — pokreni python -m executor.metaapi_provision",
+            level="error", category="executor")
+        return None
+
+    api = MetaApi(token=token)
+    account = await api.metatrader_account_api.get_account(account_id)
+    if account.state != "DEPLOYED":
+        log(f"MetaApi nalog nije deploy-ovan (stanje: {account.state}) — deploy-ujem...", category="executor")
+        await account.deploy()
+    await account.wait_connected()
+
+    connection = account.get_streaming_connection()
+    await connection.connect()
+    await connection.wait_synchronized()
+    await connection.subscribe_to_market_data(symbol=full_symbol(settings))
+    return connection
 
 
 def full_symbol(settings: dict) -> str:
@@ -55,19 +80,30 @@ def full_symbol(settings: dict) -> str:
     return f"{cfg['symbol']}{cfg.get('symbol_suffix', '')}"
 
 
-def current_price(symbol: str) -> tuple[float, float] | None:
-    tick = mt5.symbol_info_tick(symbol)
-    if tick is None:
+def current_price(connection: Any, symbol: str) -> tuple[float, float] | None:
+    """Cijena iz lokalnog sync-ovanog terminal_state — ne kosta dodatni API poziv."""
+    price = connection.terminal_state.price(symbol=symbol)
+    if not price:
         return None
-    return tick.bid, tick.ask
+    return float(price["bid"]), float(price["ask"])
 
 
-def account_equity() -> tuple[float, float]:
-    info = mt5.account_info()
-    return (info.balance, info.equity) if info else (0.0, 0.0)
+def account_equity(connection: Any) -> tuple[float, float]:
+    info = connection.terminal_state.account_information or {}
+    return float(info.get("balance", 0.0)), float(info.get("equity", 0.0))
 
 
-# ---------------------------------------------------------------- risk
+def positions_for_symbol(connection: Any, symbol: str) -> list[dict]:
+    return [p for p in connection.terminal_state.positions if p.get("symbol") == symbol]
+
+
+def positions_for_signal(connection: Any, ref_id: str) -> list[dict]:
+    """Pozicije vezane za signal preko comment taga zz:<id8>."""
+    tag = f"zz:{ref_id[:8]}"
+    return [p for p in connection.terminal_state.positions if tag in (p.get("comment") or "")]
+
+
+# ---------------------------------------------------------------- risk (nepromijenjeno — MetaApi ne dira ovu logiku)
 def compute_lot(equity: float, sl_distance: float, risk: dict, multiplier: float) -> float:
     """lot = rizik_$ / (SL_distance_$ * 100) za XAUUSD."""
     if sl_distance <= 0:
@@ -102,12 +138,11 @@ def provider_multiplier(provider: str | None) -> float:
 
 
 # ---------------------------------------------------------------- izvrsenje
-def open_new_signal(signal: dict, settings: dict) -> None:
+async def open_new_signal(connection: Any, signal: dict, settings: dict) -> None:
     risk = settings["risk"]
     symbol = full_symbol(settings)
-    mt5.symbol_select(symbol, True)
 
-    prices = current_price(symbol)
+    prices = current_price(connection, symbol)
     if not prices:
         log(f"Nema cijene za {symbol}", level="error", category="executor")
         return
@@ -141,12 +176,12 @@ def open_new_signal(signal: dict, settings: dict) -> None:
             caution_cut = 0.5  # u rasponu tolerancije, ali smanji lot
 
     # --- 3) daily loss limit + max positions
-    balance, equity = account_equity()
+    balance, equity = account_equity(connection)
     if daily_loss_exceeded(risk, balance):
         skip(signal, "Dnevni max gubitak dosegnut — bot pauziran do sutra.")
         notify("🛑 <b>Dnevni limit gubitka dosegnut.</b> Bot ne otvara nove pozicije do sutra.")
         return
-    open_now = len([p for p in (mt5.positions_get(symbol=symbol) or [])])
+    open_now = len(positions_for_symbol(connection, symbol))
     if open_now >= int(risk["max_open_positions"]):
         skip(signal, f"Već {open_now} otvorenih pozicija (max {risk['max_open_positions']}).")
         return
@@ -170,44 +205,49 @@ def open_new_signal(signal: dict, settings: dict) -> None:
         per_leg = lot_floor
         tps = tps[:n_legs]
 
-    # --- 5) posalji ordere (jedna "noga" po TP-u)
+    # --- 5) posalji ordere (jedna "noga" po TP-u) — MetaApi trade pozivi bacaju
+    # exception na gresku (umjesto retcode-a kao lokalni MetaTrader5 paket).
     opened = []
     for i, tp in enumerate(tps or [0], start=1):
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
-            "volume": per_leg,
-            "type": mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL,
-            "price": market_price,
-            "sl": sl,
-            "tp": tp if tp else 0.0,
-            "deviation": 30,
-            "magic": MAGIC_BASE + i,
-            "comment": f"zz:{signal['id'][:8]}:tp{i}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
-        }
-        result = mt5.order_send(request)
-        ok = result is not None and result.retcode == mt5.TRADE_RETCODE_DONE
+        magic = MAGIC_BASE + i
+        comment = f"zz:{signal['id'][:8]}:tp{i}"  # format se ne mijenja — executor/dashboard se oslanjaju na njega
+        options = {"magic": magic, "comment": comment}
+        ok, position_id, error_msg = True, None, None
+        try:
+            if is_buy:
+                result = await connection.create_market_buy_order(
+                    symbol=symbol, volume=per_leg, stop_loss=sl, take_profit=(tp or None), options=options)
+            else:
+                result = await connection.create_market_sell_order(
+                    symbol=symbol, volume=per_leg, stop_loss=sl, take_profit=(tp or None), options=options)
+            code = result.get("stringCode") if isinstance(result, dict) else None
+            ok = code is None or code in TRADE_SUCCESS_CODES
+            position_id = result.get("positionId") if isinstance(result, dict) else None
+            if not ok:
+                error_msg = f"{code}: {result.get('message')}"
+        except Exception as e:
+            ok = False
+            error_msg = str(e)
+
         sb().table("trade_executions").insert({
             "parsed_signal_id": signal["id"],
-            "mt5_ticket": getattr(result, "order", None) if ok else None,
-            "magic": MAGIC_BASE + i,
+            "mt5_ticket": int(position_id) if position_id else None,
+            "magic": magic,
             "symbol": symbol,
             "direction": direction,
             "lot": per_leg,
-            "entry_price": getattr(result, "price", market_price) if ok else None,
+            "entry_price": market_price if ok else None,
             "sl": sl,
             "tp": tp or None,
             "tp_index": i,
             "status": "open" if ok else "error",
             "opened_at": datetime.now(timezone.utc).isoformat() if ok else None,
-            "notes": None if ok else f"retcode={getattr(result, 'retcode', 'None')} {mt5.last_error()}",
+            "notes": None if ok else error_msg,
         }).execute()
         if ok:
             opened.append((i, tp))
         else:
-            log(f"Order TP{i} odbijen: {getattr(result, 'retcode', None)}", level="error", category="executor")
+            log(f"Order TP{i} odbijen: {error_msg}", level="error", category="executor")
 
     if opened:
         sb().table("parsed_signals").update({"decision_reason": f"Izvršeno: {len(opened)} nogu × {per_leg} lot."}).eq("id", signal["id"]).execute()
@@ -229,18 +269,12 @@ def skip(signal: dict, reason: str) -> None:
     notify(f"⏭ <b>Preskočeno</b>\n{reason}")
 
 
-def positions_for_signal(ref_id: str) -> list:
-    """MT5 pozicije vezane za signal preko comment taga zz:<id8>."""
-    tag = f"zz:{ref_id[:8]}"
-    return [p for p in (mt5.positions_get() or []) if tag in (p.comment or "")]
-
-
-def handle_followup(signal: dict, settings: dict) -> None:
+async def handle_followup(connection: Any, signal: dict, settings: dict) -> None:
     ref_id = signal.get("references_signal_id")
     if not ref_id:
         sb().table("parsed_signals").update({"decision_reason": "Nema referentnog signala — ništa za ažurirati."}).eq("id", signal["id"]).execute()
         return
-    positions = positions_for_signal(ref_id)
+    positions = positions_for_signal(connection, ref_id)
     if not positions:
         sb().table("parsed_signals").update({"decision_reason": "Nema otvorenih pozicija za taj signal."}).eq("id", signal["id"]).execute()
         return
@@ -249,20 +283,17 @@ def handle_followup(signal: dict, settings: dict) -> None:
     # decision_reason ovdje ostaje samo citljivo objasnjenje za dashboard.
 
     mtype = signal["message_type"]
-    symbol = positions[0].symbol
 
     if mtype in ("move_to_be", "tp_hit"):
         # SL -> entry za sve preostale noge (nakon TP1 po defaultu)
         if mtype == "tp_hit" and not settings["risk"].get("breakeven_after_tp1", True):
             return
         for p in positions:
-            mt5.order_send({
-                "action": mt5.TRADE_ACTION_SLTP,
-                "position": p.ticket,
-                "symbol": symbol,
-                "sl": p.price_open,
-                "tp": p.tp,
-            })
+            try:
+                await connection.modify_position(
+                    position_id=p["id"], stop_loss=p["openPrice"], take_profit=p.get("takeProfit"))
+            except Exception as e:
+                log(f"Breakeven na poziciji {p['id']} neuspio: {e}", level="error", category="executor")
         log(f"SL → breakeven za {len(positions)} pozicija ({mtype})", level="trade", category="executor",
             meta={"ref": ref_id})
         notify(f"🔒 <b>Breakeven</b> — SL pomjeren na entry za {len(positions)} pozicija.")
@@ -270,7 +301,10 @@ def handle_followup(signal: dict, settings: dict) -> None:
     elif mtype == "update_sl" and signal.get("sl") is not None:
         new_sl = float(signal["sl"])
         for p in positions:
-            mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": symbol, "sl": new_sl, "tp": p.tp})
+            try:
+                await connection.modify_position(position_id=p["id"], stop_loss=new_sl, take_profit=p.get("takeProfit"))
+            except Exception as e:
+                log(f"SL update na poziciji {p['id']} neuspio: {e}", level="error", category="executor")
         log(f"SL ažuriran na {new_sl} za {len(positions)} pozicija", level="trade", category="executor", meta={"ref": ref_id})
         notify(f"✏️ <b>SL ažuriran</b> na {new_sl} ({len(positions)} pozicija).")
 
@@ -278,56 +312,51 @@ def handle_followup(signal: dict, settings: dict) -> None:
         # close: cijela noga se zatvara. partial_close: POLA VOLUMENA svake noge
         # (ne pola broja nogu) — kanal cesto trazi "close half" na SVAKOJ otvorenoj
         # poziciji, ne da se ostavi cijela noga otvorena a druga potpuno zatvorena.
+        # MetaApi ima namjenske close pozive — ne treba rucno slati suprotan order.
         lot_floor = float(settings["risk"]["lot_floor"])
-        to_close: list[tuple[object, float]] = []
+        closed_count = 0
         for p in positions:
-            if mtype == "close":
-                to_close.append((p, p.volume))
-                continue
-            half = math.floor((p.volume / 2) * 100) / 100.0  # floor na 0.01 — nikad round-up
-            if half >= lot_floor:
-                to_close.append((p, half))
-            # ako je pola ispod minimalnog lota, ta noga se ne dijeli — ostaje puna dalje
+            try:
+                if mtype == "close":
+                    await connection.close_position(position_id=p["id"])
+                    closed_count += 1
+                else:
+                    half = math.floor((float(p["volume"]) / 2) * 100) / 100.0  # floor na 0.01 — nikad round-up
+                    if half >= lot_floor:
+                        await connection.close_position_partially(position_id=p["id"], volume=half)
+                        closed_count += 1
+                    # ako je pola ispod minimalnog lota, ta noga se ne dijeli — ostaje puna dalje
+            except Exception as e:
+                log(f"Zatvaranje pozicije {p['id']} ({mtype}) neuspjelo: {e}", level="error", category="executor")
 
-        for p, vol in to_close:
-            tick = mt5.symbol_info_tick(symbol)
-            price = tick.bid if p.type == mt5.POSITION_TYPE_BUY else tick.ask
-            mt5.order_send({
-                "action": mt5.TRADE_ACTION_DEAL,
-                "position": p.ticket,
-                "symbol": symbol,
-                "volume": vol,
-                "type": mt5.ORDER_TYPE_SELL if p.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY,
-                "price": price,
-                "deviation": 30,
-                "magic": p.magic,
-                "comment": p.comment,
-                "type_filling": mt5.ORDER_FILLING_FOK,
-            })
         if mtype == "close":
-            log(f"Zatvoreno {len(to_close)} pozicija (close)", level="trade", category="executor", meta={"ref": ref_id})
-            notify(f"📕 <b>Zatvoreno</b> {len(to_close)} pozicija po instrukciji sa kanala.")
+            log(f"Zatvoreno {closed_count} pozicija (close)", level="trade", category="executor", meta={"ref": ref_id})
+            notify(f"📕 <b>Zatvoreno</b> {closed_count} pozicija po instrukciji sa kanala.")
         else:
-            log(f"Djelimicno zatvoreno (pola volumena) na {len(to_close)}/{len(positions)} pozicija",
+            log(f"Djelimicno zatvoreno (pola volumena) na {closed_count}/{len(positions)} pozicija",
                 level="trade", category="executor", meta={"ref": ref_id})
-            notify(f"📕 <b>Djelimično zatvoreno</b> — pola volumena na {len(to_close)} od {len(positions)} pozicija.")
+            notify(f"📕 <b>Djelimično zatvoreno</b> — pola volumena na {closed_count} od {len(positions)} pozicija.")
 
 
-def sync_closed_positions(settings: dict) -> None:
-    """Oznaci u bazi pozicije koje je MT5 zatvorio (TP/SL) i upisi profit."""
+async def sync_closed_positions(connection: Any, settings: dict) -> None:
+    """Oznaci u bazi pozicije koje je broker zatvorio (TP/SL) i upisi profit."""
     open_rows = sb().table("trade_executions").select("*").eq("status", "open").execute().data or []
     if not open_rows:
         return
-    live_tickets = {p.ticket for p in (mt5.positions_get() or [])}
+    live_ids = {int(p["id"]) for p in connection.terminal_state.positions}
     for row in open_rows:
         ticket = row.get("mt5_ticket")
-        if ticket in live_tickets or ticket is None:
+        if ticket in live_ids or ticket is None:
             continue
         # pozicija vise nije ziva -> nadji deal u istoriji
-        deals = mt5.history_deals_get(position=ticket) or []
-        close_deals = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
-        profit = sum(d.profit + d.swap + d.commission for d in close_deals) if close_deals else None
-        close_price = close_deals[-1].price if close_deals else None
+        try:
+            deals = connection.history_storage.get_deals_by_position(str(ticket)) or []
+        except Exception as e:
+            log(f"Ne mogu procitati istoriju za poziciju {ticket}: {e}", level="error", category="executor")
+            continue
+        close_deals = [d for d in deals if d.get("entryType") == "DEAL_ENTRY_OUT"]
+        profit = sum((d.get("profit") or 0) + (d.get("swap") or 0) + (d.get("commission") or 0) for d in close_deals) if close_deals else None
+        close_price = close_deals[-1].get("price") if close_deals else None
         pips = None
         if close_price and row.get("entry_price"):
             diff = close_price - row["entry_price"]
@@ -346,13 +375,11 @@ def sync_closed_positions(settings: dict) -> None:
 
 
 # ---------------------------------------------------------------- main loop
-def main() -> None:
-    if mt5 is None:
-        raise SystemExit("MetaTrader5 paket nije instaliran — executor radi samo na Windows VPS-u (pip install MetaTrader5).")
-
+async def main() -> None:
     settings = get_settings()
-    if not mt5_connect(settings):
-        raise SystemExit("MT5 konekcija neuspješna — provjeri login/server u Postavkama i MT5_PASSWORD u .env.")
+    connection = await mt5_connect(settings)
+    if connection is None:
+        raise SystemExit("MetaApi konekcija neuspješna — provjeri METAAPI_TOKEN, metaapi_account_id, MT5_PASSWORD.")
 
     mode = settings["mode"]["mode"]
     log(f"Executor pokrenut — mod: {mode}, server: {settings['mt5']['server']}", category="executor")
@@ -365,7 +392,7 @@ def main() -> None:
 
             if kill_switch_on():
                 heartbeat("executor", status="degraded", meta={"kill_switch": True})
-                time.sleep(POLL_SECONDS)
+                await asyncio.sleep(POLL_SECONDS)
                 continue
 
             # 1) novi signali za izvrsenje
@@ -379,7 +406,7 @@ def main() -> None:
                 .order("created_at", desc=False).limit(3).execute().data
             ) or []
             for signal in pending:
-                open_new_signal(signal, settings)
+                await open_new_signal(connection, signal, settings)
 
             # 2) follow-up poruke (BE, update SL, close) — cist queue marker,
             #    umjesto starog poll obrazca na decision_reason (null/"Follow-up%").
@@ -391,17 +418,17 @@ def main() -> None:
                 .order("created_at", desc=False).limit(5).execute().data
             ) or []
             for signal in followups:
-                handle_followup(signal, settings)
+                await handle_followup(connection, signal, settings)
                 sb().table("parsed_signals").update(
                     {"processed_at": datetime.now(timezone.utc).isoformat()}
                 ).eq("id", signal["id"]).execute()
 
             # 3) sync zatvorenih pozicija
-            sync_closed_positions(settings)
+            await sync_closed_positions(connection, settings)
 
             # 4) equity snapshot
             if time.time() - last_snapshot > EQUITY_SNAPSHOT_EVERY:
-                balance, equity = account_equity()
+                balance, equity = account_equity(connection)
                 sb().table("equity_snapshots").insert({
                     "balance": balance, "equity": equity, "open_pnl": equity - balance,
                 }).execute()
@@ -413,8 +440,8 @@ def main() -> None:
         except Exception as e:
             log(f"Executor greška: {e}", level="error", category="executor")
             heartbeat("executor", status="degraded")
-        time.sleep(POLL_SECONDS)
+        await asyncio.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
