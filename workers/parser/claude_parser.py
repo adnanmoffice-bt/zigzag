@@ -80,13 +80,18 @@ Pravila:
 
 
 # ---------------------------------------------------------------- helpers
-def get_unparsed(text_col: str, provider_col: str, limit: int = 10) -> list[dict]:
-    """Redovi iz external_signals koji jos nemaju parsed_signals zapis."""
+def get_unparsed(text_col: str, provider_col: str, status_col: str, limit: int = 10) -> list[dict]:
+    """Redovi iz external_signals koje ZigZag jos nije obradio.
+
+    Koristi postojecu parse_status kolonu: uzima redove gdje je status
+    prazan ili 'pending', a nakon obrade upisuje 'zz_parsed'/'zz_error'.
+    Redovi koje je stari pipeline vec oznacio drugim statusom se ne diraju.
+    """
     try:
         rows = (
             sb().table("external_signals")
             .select(f"id,{text_col},{provider_col},created_at")
-            .or_("parsed.is.null,parsed.eq.false")
+            .or_(f"{status_col}.is.null,{status_col}.eq.pending,{status_col}.eq.new")
             .order("created_at", desc=False)
             .limit(limit)
             .execute()
@@ -94,7 +99,7 @@ def get_unparsed(text_col: str, provider_col: str, limit: int = 10) -> list[dict
         ) or []
         return rows
     except Exception as e:
-        log(f"Ne mogu citati external_signals ({e}). Provjeri external_signals.text_column u Postavkama.",
+        log(f"Ne mogu citati external_signals ({e}). Provjeri mapiranje kolona u Postavkama.",
             level="error", category="parser")
         return []
 
@@ -170,19 +175,19 @@ def decide(parsed: dict, settings: dict, provider: str | None) -> tuple[str, str
     return "execute", "Signal kompletan i prošao sve filtere."
 
 
-def mark_parsed(external_id: str) -> None:
+def mark_parsed(external_id: str, status_col: str, status: str = "zz_parsed") -> None:
     try:
-        sb().table("external_signals").update({"parsed": True}).eq("id", external_id).execute()
+        sb().table("external_signals").update({status_col: status}).eq("id", external_id).execute()
     except Exception:
         pass
 
 
 # ---------------------------------------------------------------- main loop
-def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col: str, provider_col: str) -> None:
+def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col: str, provider_col: str, status_col: str) -> None:
     raw_text = (row.get(text_col) or "").strip()
     provider = row.get(provider_col)
     if not raw_text:
-        mark_parsed(row["id"])
+        mark_parsed(row["id"], status_col, "zz_empty")
         return
 
     model = settings["anthropic"]["model"]
@@ -191,6 +196,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
     parsed = call_claude(client, model, max_tokens, raw_text)
     if not parsed:
         log("Claude nije vratio tool poziv", level="error", category="parser", meta={"external_id": row["id"]})
+        mark_parsed(row["id"], status_col, "zz_error")
         return
 
     ref = None
@@ -217,7 +223,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
         "raw_text": raw_text[:4000],
     }
     sb().table("parsed_signals").insert(record).execute()
-    mark_parsed(row["id"])
+    mark_parsed(row["id"], status_col)
 
     if parsed["message_type"] == "new_signal":
         log(
@@ -251,11 +257,13 @@ def main() -> None:
         try:
             settings = get_settings()
             cols = settings["external_signals"]
-            text_col, provider_col = cols["text_column"], cols["provider_column"]
+            text_col = cols["text_column"]
+            provider_col = cols["provider_column"]
+            status_col = cols.get("status_column", "parse_status")
 
-            rows = get_unparsed(text_col, provider_col)
+            rows = get_unparsed(text_col, provider_col, status_col)
             for row in rows:
-                process_row(client, row, settings, text_col, provider_col)
+                process_row(client, row, settings, text_col, provider_col, status_col)
 
             heartbeat("parser", meta={"queue": len(rows)})
         except KeyboardInterrupt:

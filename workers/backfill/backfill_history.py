@@ -41,12 +41,18 @@ async def run() -> None:
         text = (msg.message or "").strip()
         if not text:
             continue
-        rows.append({
+        row = {
             text_col: text,
-            provider_col: f"telegram:{channel_id}",
-            "created_at": msg.date.isoformat(),
+            "source": f"telegram:{channel_id}",
+            "external_message_id": msg.id,
+            "message_date": msg.date.isoformat(),
             "ingested_at": msg.date.isoformat(),
-        })
+            "parse_status": "pending",
+        }
+        if provider_col != "source":
+            sender = getattr(msg, "post_author", None)
+            row[provider_col] = sender or f"telegram:{channel_id}"
+        rows.append(row)
         if len(rows) >= BATCH:
             sb().table("external_signals").insert(rows).execute()
             total += len(rows)

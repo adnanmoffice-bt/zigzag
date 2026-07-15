@@ -68,8 +68,9 @@ const SECTIONS: {
     title: 'Ingestija (napredna)',
     sub: 'Mapiranje kolona postojeće external_signals tabele',
     fields: [
-      { name: 'text_column', label: 'Kolona sa tekstom poruke', hint: 'npr. content ili raw_text — provjeri u Supabase' },
-      { name: 'provider_column', label: 'Kolona sa izvorom', hint: 'npr. source' },
+      { name: 'text_column', label: 'Kolona sa tekstom poruke', hint: 'raw_text' },
+      { name: 'provider_column', label: 'Kolona sa provajderom', hint: 'sender' },
+      { name: 'status_column', label: 'Kolona za status obrade', hint: 'parse_status — parser upisuje zz_parsed' },
     ],
   },
 ]

@@ -26,37 +26,37 @@ from common.settings import get_settings
 load_dotenv()
 
 
-def insert_message(text: str, channel_id: str, message_id: int, text_col: str, provider_col: str) -> None:
-    now = datetime.now(timezone.utc).isoformat()
-    row = {
-        text_col: text,
-        provider_col: f"telegram:{channel_id}",
-        "created_at": now,
-        "ingested_at": now,
-    }
+def insert_message(text: str, channel_id: str, message_id: int, sender: str | None,
+                   msg_date: str | None, text_col: str, provider_col: str) -> None:
+    source = f"telegram:{channel_id}"
     try:
-        # dedupe preko cursora
+        # dedupe: ista poruka (source + external_message_id) se ne ubacuje dvaput
         existing = (
-            sb().table("external_signal_cursors").select("*")
-            .eq("source", f"telegram:{channel_id}").eq("last_message_id", message_id).execute().data
+            sb().table("external_signals").select("id")
+            .eq("source", source).eq("external_message_id", message_id)
+            .limit(1).execute().data
         )
         if existing:
             return
     except Exception:
-        pass  # cursor tabela drugacije strukture — nastavi bez dedupe
+        pass
 
+    now = datetime.now(timezone.utc).isoformat()
+    row = {
+        text_col: text,
+        "source": source,
+        "external_message_id": message_id,
+        "message_date": msg_date or now,
+        "ingested_at": now,
+        "parse_status": "pending",
+    }
+    if provider_col not in ("source",):  # npr. sender
+        row[provider_col] = sender or source
     try:
         sb().table("external_signals").insert(row).execute()
-        try:
-            sb().table("external_signal_cursors").upsert(
-                {"source": f"telegram:{channel_id}", "last_message_id": message_id},
-                on_conflict="source",
-            ).execute()
-        except Exception:
-            pass
         log(f"Nova poruka sa kanala ({len(text)} znakova)", category="listener")
     except Exception as e:
-        log(f"Insert u external_signals nije uspio: {e} — provjeri text_column u Postavkama.",
+        log(f"Insert u external_signals nije uspio: {e} — provjeri mapiranje kolona u Postavkama.",
             level="error", category="listener")
 
 
@@ -74,11 +74,20 @@ async def run() -> None:
 
     client = TelegramClient(StringSession(session_string), api_id, api_hash)
 
+    async def sender_name(event) -> str | None:
+        try:
+            s = await event.get_sender()
+            return getattr(s, "title", None) or getattr(s, "username", None) or getattr(s, "first_name", None)
+        except Exception:
+            return None
+
     @client.on(events.NewMessage(chats=channel_id))
     async def on_message(event):  # noqa: ANN001
         text = event.message.message or ""
         if text.strip():
-            insert_message(text, str(channel_id), event.message.id, cols["text_column"], cols["provider_column"])
+            insert_message(text, str(channel_id), event.message.id, await sender_name(event),
+                           event.message.date.isoformat() if event.message.date else None,
+                           cols["text_column"], cols["provider_column"])
 
     @client.on(events.MessageEdited(chats=channel_id))
     async def on_edit(event):  # noqa: ANN001
@@ -86,6 +95,8 @@ async def run() -> None:
         if text.strip():
             # editovane poruke tretiramo kao nove (signal se cesto edituje sa TP-ovima)
             insert_message(f"[EDIT] {text}", str(channel_id), event.message.id * 1000 + 1,
+                           await sender_name(event),
+                           event.message.date.isoformat() if event.message.date else None,
                            cols["text_column"], cols["provider_column"])
 
     async def beat() -> None:

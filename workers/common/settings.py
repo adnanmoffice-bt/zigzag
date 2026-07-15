@@ -14,7 +14,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     "mt5": {"login": "", "server": "IG-Live2", "symbol": "XAUUSD", "symbol_suffix": ""},
     "telegram": {"api_id": "", "api_hash": "", "channel_id": "", "bot_token": "", "notify_chat_id": ""},
     "anthropic": {"model": "claude-sonnet-4-6", "max_tokens": 1024},
-    "external_signals": {"text_column": "content", "provider_column": "source"},
+    "external_signals": {"text_column": "raw_text", "provider_column": "sender", "status_column": "parse_status"},
 }
 
 
