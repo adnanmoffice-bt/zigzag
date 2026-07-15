@@ -13,6 +13,7 @@ export type ParsedSignal = {
   decision: 'pending' | 'execute' | 'skip' | 'manual'
   decision_reason: string | null
   raw_text: string | null
+  processed_at: string | null
   created_at: string
 }
 

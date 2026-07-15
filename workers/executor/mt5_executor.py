@@ -244,6 +244,9 @@ def handle_followup(signal: dict, settings: dict) -> None:
     if not positions:
         sb().table("parsed_signals").update({"decision_reason": "Nema otvorenih pozicija za taj signal."}).eq("id", signal["id"]).execute()
         return
+    # napomena: processed_at se postavlja centralno u main loopu nakon poziva
+    # ove funkcije (i za ove rane return-ove i za akcione granice ispod) —
+    # decision_reason ovdje ostaje samo citljivo objasnjenje za dashboard.
 
     mtype = signal["message_type"]
     symbol = positions[0].symbol
@@ -360,26 +363,19 @@ def main() -> None:
             for signal in pending:
                 open_new_signal(signal, settings)
 
-            # 2) follow-up poruke (BE, update SL, close)
+            # 2) follow-up poruke (BE, update SL, close) — cist queue marker,
+            #    umjesto starog poll obrazca na decision_reason (null/"Follow-up%").
             followups = (
                 sb().table("parsed_signals").select("*")
                 .eq("decision", "execute")
                 .neq("message_type", "new_signal")
-                .is_("decision_reason", "null")  # jos neobradene... fallback nize
+                .is_("processed_at", "null")
                 .order("created_at", desc=False).limit(5).execute().data
             ) or []
-            if not followups:
-                followups = (
-                    sb().table("parsed_signals").select("*")
-                    .eq("decision", "execute")
-                    .neq("message_type", "new_signal")
-                    .like("decision_reason", "Follow-up%")
-                    .order("created_at", desc=False).limit(5).execute().data
-                ) or []
             for signal in followups:
                 handle_followup(signal, settings)
                 sb().table("parsed_signals").update(
-                    {"decision_reason": f"Obrađeno: {signal['message_type']}"}
+                    {"processed_at": datetime.now(timezone.utc).isoformat()}
                 ).eq("id", signal["id"]).execute()
 
             # 3) sync zatvorenih pozicija

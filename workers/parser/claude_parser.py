@@ -221,6 +221,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
         "decision": decision,
         "decision_reason": reason,
         "raw_text": raw_text[:4000],
+        "processed_at": None,  # executor upisuje kad obradi follow-up (queue marker, vidi migraciju 002)
     }
     sb().table("parsed_signals").insert(record).execute()
     mark_parsed(row["id"], status_col)
