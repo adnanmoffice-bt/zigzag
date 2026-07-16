@@ -83,21 +83,35 @@ Pravila:
 def get_unparsed(text_col: str, provider_col: str, status_col: str, limit: int = 10) -> list[dict]:
     """Redovi iz external_signals koje ZigZag jos nije obradio.
 
-    Koristi postojecu parse_status kolonu: uzima redove gdje je status
-    prazan ili 'pending', a nakon obrade upisuje 'zz_parsed'/'zz_error'.
-    Redovi koje je stari pipeline vec oznacio drugim statusom se ne diraju.
+    external_signals je tabela DIJELJENA sa drugim (stariji) pipelineom koji
+    ima CHECK constraint na parse_status (dozvoljava samo pending/parsed/
+    unparseable) — pisanje 'zz_parsed'/'zz_error' tamo UVIJEK puca (23514) i
+    bilo je silent-swallowed, sto je izazvalo beskonacnu re-obradu istih redova
+    i spaljivanje Anthropic budzeta. Zato je ZigZag "obradio ovo" sad utvrdjeno
+    iskljucivo kroz postojanje reda u parsed_signals.external_signal_id — ne
+    diramo tudju parse_status kolonu nikako.
     """
     try:
-        rows = (
+        candidates = (
             sb().table("external_signals")
             .select(f"id,{text_col},{provider_col},created_at")
             .or_(f"{status_col}.is.null,{status_col}.eq.pending,{status_col}.eq.new")
             .order("created_at", desc=False)
-            .limit(limit)
+            .limit(limit * 5)
             .execute()
             .data
         ) or []
-        return rows
+        if not candidates:
+            return []
+        ids = [r["id"] for r in candidates]
+        done_rows = (
+            sb().table("parsed_signals").select("external_signal_id")
+            .in_("external_signal_id", ids)
+            .execute().data
+        ) or []
+        done_ids = {d["external_signal_id"] for d in done_rows}
+        fresh = [r for r in candidates if r["id"] not in done_ids]
+        return fresh[:limit]
     except Exception as e:
         log(f"Ne mogu citati external_signals ({e}). Provjeri mapiranje kolona u Postavkama.",
             level="error", category="parser")
@@ -182,19 +196,18 @@ def decide(parsed: dict, settings: dict, provider: str | None) -> tuple[str, str
     return "execute", "Signal kompletan i prošao sve filtere."
 
 
-def mark_parsed(external_id: str, status_col: str, status: str = "zz_parsed") -> None:
-    try:
-        sb().table("external_signals").update({status_col: status}).eq("id", external_id).execute()
-    except Exception:
-        pass
-
-
 # ---------------------------------------------------------------- main loop
 def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col: str, provider_col: str, status_col: str) -> None:
     raw_text = (row.get(text_col) or "").strip()
     provider = row.get(provider_col)
     if not raw_text:
-        mark_parsed(row["id"], status_col, "zz_empty")
+        # prazan tekst: nema sta parsirati, ali JOS upisujemo placeholder parsed_signals
+        # red (message_type=noise) da get_unparsed() vise ne vraca ovaj id (anti-join).
+        sb().table("parsed_signals").insert({
+            "id": str(uuid.uuid4()), "external_signal_id": row["id"], "provider": provider,
+            "message_type": "noise", "decision": "skip", "decision_reason": "Prazan tekst poruke.",
+            "raw_text": "", "tps": [], "confidence": 1.0, "processed_at": None,
+        }).execute()
         return
 
     model = settings["anthropic"]["model"]
@@ -203,7 +216,11 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
     parsed = call_claude(client, model, max_tokens, raw_text)
     if not parsed:
         log("Claude nije vratio tool poziv", level="error", category="parser", meta={"external_id": row["id"]})
-        mark_parsed(row["id"], status_col, "zz_error")
+        sb().table("parsed_signals").insert({
+            "id": str(uuid.uuid4()), "external_signal_id": row["id"], "provider": provider,
+            "message_type": "noise", "decision": "skip", "decision_reason": "Claude parse greska — vidi activity log.",
+            "raw_text": raw_text[:4000], "tps": [], "confidence": 0.0, "processed_at": None,
+        }).execute()
         return
 
     ref = None
@@ -231,7 +248,6 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
         "processed_at": None,  # executor upisuje kad obradi follow-up (queue marker, vidi migraciju 002)
     }
     sb().table("parsed_signals").insert(record).execute()
-    mark_parsed(row["id"], status_col)
 
     if parsed["message_type"] == "new_signal":
         log(
