@@ -104,9 +104,12 @@ def get_unparsed(text_col: str, provider_col: str, status_col: str, limit: int =
         if not candidates:
             return []
         ids = [r["id"] for r in candidates]
+        # explicitni limit: PostgREST default (1000) bi mogao odsjeci "done" redove
+        # kad isti external_signal_id ima puno duplikata — vidi migraciju 003.
         done_rows = (
             sb().table("parsed_signals").select("external_signal_id")
             .in_("external_signal_id", ids)
+            .limit(10000)
             .execute().data
         ) or []
         done_ids = {d["external_signal_id"] for d in done_rows}
@@ -116,6 +119,19 @@ def get_unparsed(text_col: str, provider_col: str, status_col: str, limit: int =
         log(f"Ne mogu citati external_signals ({e}). Provjeri mapiranje kolona u Postavkama.",
             level="error", category="parser")
         return []
+
+
+def insert_parsed_signal(record: dict) -> None:
+    """Insert sa zastitom protiv duplikata — unique index na external_signal_id
+    (migracija 003) je backstop ako anti-join u get_unparsed() ista propusti
+    (npr. race izmedju dva poll ciklusa). Duplicate-key nije greska, samo znak
+    da je red vec obradjen — preskoci bez logovanja kao error."""
+    try:
+        sb().table("parsed_signals").insert(record).execute()
+    except Exception as e:
+        if "23505" in str(e) or "duplicate key" in str(e).lower():
+            return
+        raise
 
 
 def call_claude(client: anthropic.Anthropic, model: str, max_tokens: int, raw_text: str) -> dict | None:
@@ -203,11 +219,11 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
     if not raw_text:
         # prazan tekst: nema sta parsirati, ali JOS upisujemo placeholder parsed_signals
         # red (message_type=noise) da get_unparsed() vise ne vraca ovaj id (anti-join).
-        sb().table("parsed_signals").insert({
+        insert_parsed_signal({
             "id": str(uuid.uuid4()), "external_signal_id": row["id"], "provider": provider,
             "message_type": "noise", "decision": "skip", "decision_reason": "Prazan tekst poruke.",
             "raw_text": "", "tps": [], "confidence": 1.0, "processed_at": None,
-        }).execute()
+        })
         return
 
     model = settings["anthropic"]["model"]
@@ -216,11 +232,11 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
     parsed = call_claude(client, model, max_tokens, raw_text)
     if not parsed:
         log("Claude nije vratio tool poziv", level="error", category="parser", meta={"external_id": row["id"]})
-        sb().table("parsed_signals").insert({
+        insert_parsed_signal({
             "id": str(uuid.uuid4()), "external_signal_id": row["id"], "provider": provider,
             "message_type": "noise", "decision": "skip", "decision_reason": "Claude parse greska — vidi activity log.",
             "raw_text": raw_text[:4000], "tps": [], "confidence": 0.0, "processed_at": None,
-        }).execute()
+        })
         return
 
     ref = None
@@ -247,7 +263,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
         "raw_text": raw_text[:4000],
         "processed_at": None,  # executor upisuje kad obradi follow-up (queue marker, vidi migraciju 002)
     }
-    sb().table("parsed_signals").insert(record).execute()
+    insert_parsed_signal(record)
 
     if parsed["message_type"] == "new_signal":
         log(
