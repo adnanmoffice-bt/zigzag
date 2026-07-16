@@ -12,7 +12,7 @@ export default function Login() {
     setLoading(true)
     setError(null)
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError('Prijava nije uspjela. Provjeri email i lozinku — korisnik se kreira u Supabase → Authentication → Users.')
+    if (error) setError('Sign-in failed. Check email and password — users are created in Supabase → Authentication → Users.')
     setLoading(false)
   }
 
@@ -32,15 +32,15 @@ export default function Login() {
             <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           </div>
           <div>
-            <label className="label mb-1.5 block">Lozinka</label>
+            <label className="label mb-1.5 block">Password</label>
             <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
           {error && <p className="text-xs text-loss">{error}</p>}
           <button className="btn-primary w-full justify-center" disabled={loading}>
-            {loading ? 'Prijava…' : 'Prijavi se'}
+            {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-        <p className="mt-4 text-center text-xs text-muted">Privatni sistem. Pristup samo uz nalog.</p>
+        <p className="mt-4 text-center text-xs text-muted">Private system. Access by account only.</p>
       </div>
     </div>
   )

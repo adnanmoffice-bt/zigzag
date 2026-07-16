@@ -4,11 +4,11 @@ import type { ActivityRow } from '../lib/types'
 import { fmtTime } from '../lib/format'
 import { Badge, Card, Empty } from '../components/ui'
 
-const LEVELS = ['sve', 'trade', 'warn', 'error'] as const
+const LEVELS = ['all', 'trade', 'warn', 'error'] as const
 
 export default function ActivityPage() {
   const [rows, setRows] = useState<ActivityRow[]>([])
-  const [filter, setFilter] = useState<(typeof LEVELS)[number]>('sve')
+  const [filter, setFilter] = useState<(typeof LEVELS)[number]>('all')
 
   useEffect(() => {
     supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(400)
@@ -21,20 +21,20 @@ export default function ActivityPage() {
     return () => { supabase.removeChannel(ch) }
   }, [])
 
-  const filtered = filter === 'sve' ? rows : rows.filter((r) => r.level === filter)
+  const filtered = filter === 'all' ? rows : rows.filter((r) => r.level === filter)
 
   return (
     <div className="space-y-5">
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-xl font-bold">Aktivnost</h1>
-          <p className="mt-0.5 text-sm text-muted">Kompletan dnevnik — svaka odluka i razlog</p>
+          <h1 className="text-xl font-bold">Activity</h1>
+          <p className="mt-0.5 text-sm text-muted">Full journal — every decision and reason</p>
         </div>
         <div className="flex gap-1 rounded-lg border border-line bg-white p-1">
           {LEVELS.map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`rounded-md px-3 py-1 text-xs font-medium transition ${filter === f ? 'bg-accent-soft text-accent-dark' : 'text-muted hover:text-ink'}`}>
-              {f === 'sve' ? 'Sve' : f === 'trade' ? 'Trejdovi' : f === 'warn' ? 'Upozorenja' : 'Greške'}
+              {f === 'all' ? 'All' : f === 'trade' ? 'Trades' : f === 'warn' ? 'Warnings' : 'Errors'}
             </button>
           ))}
         </div>
@@ -42,7 +42,7 @@ export default function ActivityPage() {
 
       <Card>
         {filtered.length === 0 ? (
-          <Empty title="Log je prazan" hint="Workeri upisuju svaki događaj ovdje." />
+          <Empty title="Log is empty" hint="Workers write every event here." />
         ) : (
           <ul className="divide-y divide-line">
             {filtered.map((a) => (

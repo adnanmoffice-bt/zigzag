@@ -25,22 +25,22 @@ export default function Providers() {
   return (
     <div className="space-y-5">
       <header>
-        <h1 className="text-xl font-bold">Provajderi</h1>
-        <p className="mt-0.5 text-sm text-muted">Učinak svakog izvora signala — isključi one koji vuku minus</p>
+        <h1 className="text-xl font-bold">Providers</h1>
+        <p className="mt-0.5 text-sm text-muted">Performance by signal source — disable ones that drag PnL down</p>
       </header>
 
       <Card>
-        <CardHeader title="Leaderboard" sub="Sortiran po ukupnim pipsima" />
+        <CardHeader title="Leaderboard" sub="Sorted by total pips" />
         {rows.length === 0 ? (
-          <Empty title="Statistika još nije izračunata" hint="Pokreni workers/backfill/provider_stats.py da izračunaš učinak iz istorije." />
+          <Empty title="Stats not calculated yet" hint="Run workers/backfill/provider_stats.py to compute performance from history." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b border-line">
                 <tr>
-                  <Th>Provajder</Th><Th right>Signala</Th><Th right>Win rate</Th>
-                  <Th right>Avg pips</Th><Th right>Ukupno pips</Th><Th right>Zadnji</Th>
-                  <Th right>Rizik ×</Th><Th right>Aktivan</Th>
+                  <Th>Provider</Th><Th right>Signals</Th><Th right>Win rate</Th>
+                  <Th right>Avg pips</Th><Th right>Total pips</Th><Th right>Last</Th>
+                  <Th right>Risk ×</Th><Th right>Active</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">

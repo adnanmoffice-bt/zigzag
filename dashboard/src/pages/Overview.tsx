@@ -54,28 +54,28 @@ export default function Overview() {
     <div className="space-y-5">
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-xl font-bold">Pregled</h1>
-          <p className="mt-0.5 text-sm text-muted">Šta bot radi upravo sada</p>
+          <h1 className="text-xl font-bold">Overview</h1>
+          <p className="mt-0.5 text-sm text-muted">What the bot is doing right now</p>
         </div>
         {lastSignal && (
           <div className="text-right text-xs text-muted">
-            Zadnji signal <span className="num font-semibold text-ink">{timeAgo(lastSignal.created_at)}</span>
+            Last signal <span className="num font-semibold text-ink">{timeAgo(lastSignal.created_at)}</span>
           </div>
         )}
       </header>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="PnL danas" value={fmtMoney(kpi.todayPnl)} tone={kpi.todayPnl > 0 ? 'win' : kpi.todayPnl < 0 ? 'loss' : 'neutral'} />
-        <Stat label="Otvorene pozicije" value={kpi.openCount} sub="XAUUSD" />
-        <Stat label="Win rate" value={kpi.winRate == null ? '—' : `${fmtNum(kpi.winRate, 1)}%`} sub={`${kpi.closedCount} zatvorenih`} />
-        <Stat label="Ukupan PnL" value={fmtMoney(kpi.totalPnl)} tone={kpi.totalPnl > 0 ? 'win' : kpi.totalPnl < 0 ? 'loss' : 'neutral'} />
+        <Stat label="PnL today" value={fmtMoney(kpi.todayPnl)} tone={kpi.todayPnl > 0 ? 'win' : kpi.todayPnl < 0 ? 'loss' : 'neutral'} />
+        <Stat label="Open positions" value={kpi.openCount} sub="XAUUSD" />
+        <Stat label="Win rate" value={kpi.winRate == null ? '—' : `${fmtNum(kpi.winRate, 1)}%`} sub={`${kpi.closedCount} closed`} />
+        <Stat label="Total PnL" value={fmtMoney(kpi.totalPnl)} tone={kpi.totalPnl > 0 ? 'win' : kpi.totalPnl < 0 ? 'loss' : 'neutral'} />
       </div>
 
       <Card>
-        <CardHeader title="Equity kriva" sub="Snapshoti sa MT5 naloga" />
+        <CardHeader title="Equity curve" sub="Snapshots from the MT5 account" />
         <div className="h-64 px-2 py-3">
           {chartData.length < 2 ? (
-            <Empty title="Još nema equity podataka" hint="Executor upisuje snapshot svakih 5 minuta kad je pokrenut." />
+            <Empty title="No equity data yet" hint="The executor writes a snapshot every 5 minutes when it is running." />
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
@@ -101,9 +101,9 @@ export default function Overview() {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Zadnji signal" sub="Kako ga je Claude pročitao" />
+          <CardHeader title="Latest signal" sub="How Claude parsed it" />
           {!lastSignal ? (
-            <Empty title="Još nema signala" hint="Kad listener uhvati poruku sa kanala, pojavit će se ovdje." />
+            <Empty title="No signals yet" hint="When the listener catches a channel message, it will show up here." />
           ) : (
             <div className="space-y-3 p-5">
               <div className="flex flex-wrap items-center gap-2">
@@ -126,9 +126,9 @@ export default function Overview() {
         </Card>
 
         <Card>
-          <CardHeader title="Aktivnost" sub="Zadnjih 8 događaja" />
+          <CardHeader title="Activity" sub="Last 8 events" />
           {activity.length === 0 ? (
-            <Empty title="Log je prazan" />
+            <Empty title="Log is empty" />
           ) : (
             <ul className="divide-y divide-line">
               {activity.map((a) => (

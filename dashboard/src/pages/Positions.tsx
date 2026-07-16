@@ -27,9 +27,9 @@ export default function Positions() {
       <table className="w-full">
         <thead className="border-b border-line">
           <tr>
-            <Th>Smjer</Th><Th>Lot</Th><Th>Entry</Th><Th>SL</Th><Th>TP</Th>
+            <Th>Side</Th><Th>Lot</Th><Th>Entry</Th><Th>SL</Th><Th>TP</Th>
             {showClose && <Th>Close</Th>}
-            <Th right>Pips</Th><Th right>Profit</Th><Th right>Vrijeme</Th>
+            <Th right>Pips</Th><Th right>Profit</Th><Th right>Time</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line">
@@ -54,18 +54,18 @@ export default function Positions() {
   return (
     <div className="space-y-5">
       <header>
-        <h1 className="text-xl font-bold">Pozicije</h1>
-        <p className="mt-0.5 text-sm text-muted">Sve što je executor otvorio na MT5</p>
+        <h1 className="text-xl font-bold">Positions</h1>
+        <p className="mt-0.5 text-sm text-muted">Everything the executor opened on MT5</p>
       </header>
 
       <Card>
-        <CardHeader title="Otvorene" sub={`${open.length} pozicija`} />
-        {open.length === 0 ? <Empty title="Nema otvorenih pozicija" /> : <Table data={open} />}
+        <CardHeader title="Open" sub={`${open.length} position${open.length === 1 ? '' : 's'}`} />
+        {open.length === 0 ? <Empty title="No open positions" /> : <Table data={open} />}
       </Card>
 
       <Card>
-        <CardHeader title="Zatvorene" sub={`Zadnjih ${closed.length}`} />
-        {closed.length === 0 ? <Empty title="Još nema zatvorenih trejdova" /> : <Table data={closed} showClose />}
+        <CardHeader title="Closed" sub={`Last ${closed.length}`} />
+        {closed.length === 0 ? <Empty title="No closed trades yet" /> : <Table data={closed} showClose />}
       </Card>
     </div>
   )

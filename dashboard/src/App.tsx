@@ -18,12 +18,12 @@ import ActivityPage from './pages/Activity'
 import SettingsPage from './pages/Settings'
 
 const NAV = [
-  { to: '/', label: 'Pregled', icon: LayoutDashboard },
-  { to: '/signals', label: 'Signali', icon: Radio },
-  { to: '/positions', label: 'Pozicije', icon: CandlestickChart },
-  { to: '/providers', label: 'Provajderi', icon: Users },
-  { to: '/activity', label: 'Aktivnost', icon: ListTree },
-  { to: '/settings', label: 'Postavke', icon: SettingsIcon },
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/signals', label: 'Signals', icon: Radio },
+  { to: '/positions', label: 'Positions', icon: CandlestickChart },
+  { to: '/providers', label: 'Providers', icon: Users },
+  { to: '/activity', label: 'Activity', icon: ListTree },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
 function KillSwitch() {
@@ -45,7 +45,7 @@ function KillSwitch() {
   return (
     <div className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${enabled ? 'border-loss/40 bg-loss/5' : 'border-line bg-white'}`}>
       <div>
-        <div className="text-xs font-semibold">{enabled ? 'Bot zaustavljen' : 'Bot aktivan'}</div>
+        <div className="text-xs font-semibold">{enabled ? 'Bot stopped' : 'Bot active'}</div>
         <div className="text-[11px] text-muted">Kill switch</div>
       </div>
       <Toggle checked={enabled} onChange={flip} disabled={saving} />

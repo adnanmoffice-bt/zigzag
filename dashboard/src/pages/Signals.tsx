@@ -5,20 +5,20 @@ import { fmtNum, fmtTime } from '../lib/format'
 import { Badge, Card, DirectionBadge, Empty } from '../components/ui'
 
 const TYPE_LABEL: Record<string, string> = {
-  new_signal: 'Novi signal',
+  new_signal: 'New signal',
   update_sl: 'Update SL',
   tp_hit: 'TP hit',
   move_to_be: 'Breakeven',
-  close: 'Zatvori',
-  partial_close: 'Djelimično zatvori',
-  noise: 'Šum',
+  close: 'Close',
+  partial_close: 'Partial close',
+  noise: 'Noise',
 }
 
-const FILTERS = ['sve', 'new_signal', 'execute', 'skip'] as const
+const FILTERS = ['all', 'new_signal', 'execute', 'skip'] as const
 
 export default function Signals() {
   const [rows, setRows] = useState<ParsedSignal[]>([])
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('sve')
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export default function Signals() {
   }, [])
 
   const filtered = rows.filter((r) => {
-    if (filter === 'sve') return true
+    if (filter === 'all') return true
     if (filter === 'new_signal') return r.message_type === 'new_signal'
     return r.decision === filter
   })
@@ -44,8 +44,8 @@ export default function Signals() {
     <div className="space-y-5">
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-xl font-bold">Signali</h1>
-          <p className="mt-0.5 text-sm text-muted">Live feed sa Telegram kanala, parsiran Claude-om</p>
+          <h1 className="text-xl font-bold">Signals</h1>
+          <p className="mt-0.5 text-sm text-muted">Live feed from the Telegram channel, parsed by Claude</p>
         </div>
         <div className="flex gap-1 rounded-lg border border-line bg-white p-1">
           {FILTERS.map((f) => (
@@ -56,14 +56,14 @@ export default function Signals() {
                 filter === f ? 'bg-accent-soft text-accent-dark' : 'text-muted hover:text-ink'
               }`}
             >
-              {f === 'sve' ? 'Sve' : f === 'new_signal' ? 'Novi signali' : f === 'execute' ? 'Izvršeni' : 'Preskočeni'}
+              {f === 'all' ? 'All' : f === 'new_signal' ? 'New signals' : f === 'execute' ? 'Executed' : 'Skipped'}
             </button>
           ))}
         </div>
       </header>
 
       {loading ? null : filtered.length === 0 ? (
-        <Card><Empty title="Nema signala za ovaj filter" hint="Signali se pojavljuju čim ih parser obradi." /></Card>
+        <Card><Empty title="No signals for this filter" hint="Signals appear as soon as the parser processes them." /></Card>
       ) : (
         <div className="space-y-3">
           {filtered.map((s) => (
@@ -95,11 +95,11 @@ export default function Signals() {
               )}
 
               {s.decision_reason && (
-                <p className="mt-2 text-xs text-muted"><span className="font-semibold">Razlog:</span> {s.decision_reason}</p>
+                <p className="mt-2 text-xs text-muted"><span className="font-semibold">Reason:</span> {s.decision_reason}</p>
               )}
               {s.raw_text && (
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-[11px] font-medium text-muted/70 hover:text-muted">Originalna poruka</summary>
+                  <summary className="cursor-pointer text-[11px] font-medium text-muted/70 hover:text-muted">Original message</summary>
                   <pre className="mt-1.5 whitespace-pre-wrap rounded-lg bg-surface px-3 py-2 font-sans text-xs text-muted">{s.raw_text}</pre>
                 </details>
               )}

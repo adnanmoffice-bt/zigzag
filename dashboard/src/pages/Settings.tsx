@@ -12,66 +12,67 @@ const SECTIONS: {
 }[] = [
   {
     key: 'mode',
-    title: 'Način rada',
-    sub: 'Demo dok validacija ne prođe — minimum 4 sedmice i 50+ signala',
-    fields: [{ name: 'mode', label: 'Mod', options: ['demo', 'live'], hint: 'live tek nakon demo validacije' }],
+    title: 'Operating mode',
+    sub: 'Demo until validation passes — minimum 4 weeks and 50+ signals',
+    fields: [{ name: 'mode', label: 'Mode', options: ['demo', 'live'], hint: 'live only after demo validation' }],
   },
   {
     key: 'telegram',
     title: 'Telegram',
-    sub: 'Listener čita kanal; bot šalje notifikacije tebi',
+    sub: 'Listener reads the channel; bot sends notifications to you',
     fields: [
       { name: 'api_id', label: 'API ID', hint: 'my.telegram.org → API development tools' },
       { name: 'api_hash', label: 'API Hash', type: 'password' },
-      { name: 'channel_id', label: 'ID kanala', hint: 'npr. -1003910126970' },
+      { name: 'channel_id', label: 'Channel ID', hint: 'e.g. -1003910126970' },
       { name: 'bot_token', label: 'Bot token (BotFather)', type: 'password' },
-      { name: 'notify_chat_id', label: 'Tvoj chat ID', hint: 'iz /getUpdates nakon što botu pošalješ /start' },
+      { name: 'notify_chat_id', label: 'Your chat ID', hint: 'from /getUpdates after you send the bot /start' },
     ],
   },
   {
     key: 'anthropic',
     title: 'Claude (Anthropic)',
-    sub: 'Parser signala — API ključ ide u .env na serveru, ne ovdje',
+    sub: 'Signal parser — API key goes in .env on the server, not here',
     fields: [
-      { name: 'model', label: 'Model', hint: 'npr. claude-sonnet-4-6' },
-      { name: 'max_tokens', label: 'Max tokena po pozivu', type: 'number' },
+      { name: 'model', label: 'Model', hint: 'e.g. claude-sonnet-4-6' },
+      { name: 'max_tokens', label: 'Max tokens per call', type: 'number' },
     ],
   },
   {
     key: 'mt5',
     title: 'MetaTrader 5 (IG)',
-    sub: 'Lozinka NIKAD ovdje — samo u .env na Windows VPS-u',
+    sub: 'Password NEVER here — only in .env on the worker host',
     fields: [
-      { name: 'login', label: 'MT5 login (broj naloga)' },
-      { name: 'server', label: 'Server', hint: 'IG-Live2 ili IG-Demo' },
-      { name: 'symbol', label: 'Simbol', hint: 'XAUUSD' },
-      { name: 'symbol_suffix', label: 'Suffix simbola', hint: 'ostavi prazno ako je čisti XAUUSD' },
+      { name: 'login', label: 'MT5 login (account number)' },
+      { name: 'server', label: 'Server', hint: 'IG-LIVE or IG-Demo' },
+      { name: 'symbol', label: 'Symbol', hint: 'XAUUSD' },
+      { name: 'symbol_suffix', label: 'Symbol suffix', hint: 'leave blank for plain XAUUSD' },
+      { name: 'metaapi_account_id', label: 'MetaApi account ID', hint: 'from metaapi_provision.py' },
     ],
   },
   {
     key: 'risk',
-    title: 'Rizik',
-    sub: 'Pravila koja executor primjenjuje na svaki signal',
+    title: 'Risk',
+    sub: 'Rules the executor applies to every signal',
     fields: [
-      { name: 'risk_percent', label: 'Rizik po trejdu (%)', type: 'number', hint: 'preporuka 0.5 za start' },
-      { name: 'max_risk_usd', label: 'Max rizik po signalu ($)', type: 'number', hint: 'tvrdi cap gubitka ako SL udari — npr. 80; 0 = isključeno' },
-      { name: 'daily_max_loss_percent', label: 'Dnevni max gubitak (%)', type: 'number', hint: 'bot staje kad se dosegne' },
-      { name: 'max_open_positions', label: 'Max otvorenih pozicija', type: 'number' },
-      { name: 'min_confidence', label: 'Min. confidence parsera (0–1)', type: 'number', hint: 'ispod ovoga → skip' },
-      { name: 'slippage_max_usd', label: 'Max udaljenost od entry raspona ($)', type: 'number', hint: 'zaštita od "chasing" ulaza' },
-      { name: 'entry_mode', label: 'Entry mod', options: ['smart', 'market', 'limit'], hint: 'smart: market ako je cijena u rasponu, inače limit' },
+      { name: 'risk_percent', label: 'Risk per trade (%)', type: 'number', hint: 'recommend 0.5 to start' },
+      { name: 'max_risk_usd', label: 'Max risk per signal ($)', type: 'number', hint: 'hard loss cap if SL hits — e.g. 80; 0 = off' },
+      { name: 'daily_max_loss_percent', label: 'Daily max loss (%)', type: 'number', hint: 'bot stops when reached' },
+      { name: 'max_open_positions', label: 'Max open positions', type: 'number' },
+      { name: 'min_confidence', label: 'Min. parser confidence (0–1)', type: 'number', hint: 'below this → skip' },
+      { name: 'slippage_max_usd', label: 'Max distance from entry range ($)', type: 'number', hint: 'anti-chasing protection' },
+      { name: 'entry_mode', label: 'Entry mode', options: ['smart', 'market', 'limit'], hint: 'smart: market if price in range, else limit' },
       { name: 'lot_floor', label: 'Min. lot', type: 'number' },
       { name: 'lot_cap', label: 'Max. lot (safety cap)', type: 'number' },
     ],
   },
   {
     key: 'external_signals',
-    title: 'Ingestija (napredna)',
-    sub: 'Mapiranje kolona postojeće external_signals tabele',
+    title: 'Ingestion (advanced)',
+    sub: 'Column mapping for the existing external_signals table',
     fields: [
-      { name: 'text_column', label: 'Kolona sa tekstom poruke', hint: 'raw_text' },
-      { name: 'provider_column', label: 'Kolona sa provajderom', hint: 'sender' },
-      { name: 'status_column', label: 'Kolona za status obrade', hint: 'parse_status — parser upisuje zz_parsed' },
+      { name: 'text_column', label: 'Message text column', hint: 'raw_text' },
+      { name: 'provider_column', label: 'Provider column', hint: 'sender' },
+      { name: 'status_column', label: 'Parse status column', hint: 'parse_status — parser writes zz_parsed' },
     ],
   },
 ]
@@ -105,7 +106,7 @@ export default function SettingsPage() {
       return { key: s.key, value: clean, updated_at: new Date().toISOString() }
     })
     const { error } = await supabase.from('bot_settings').upsert(rows)
-    if (error) setError(`Snimanje nije uspjelo: ${error.message}`)
+    if (error) setError(`Save failed: ${error.message}`)
     else setSavedAt(new Date().toLocaleTimeString())
     setSaving(false)
   }
@@ -114,13 +115,13 @@ export default function SettingsPage() {
     <div className="space-y-5">
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-xl font-bold">Postavke</h1>
-          <p className="mt-0.5 text-sm text-muted">Konekcije i pravila — workeri čitaju ove vrijednosti iz baze</p>
+          <h1 className="text-xl font-bold">Settings</h1>
+          <p className="mt-0.5 text-sm text-muted">Connections and rules — workers read these values from the database</p>
         </div>
         <div className="flex items-center gap-3">
-          {savedAt && <span className="text-xs text-win">Snimljeno {savedAt}</span>}
+          {savedAt && <span className="text-xs text-win">Saved {savedAt}</span>}
           <button className="btn-primary" onClick={save} disabled={saving}>
-            {saving ? 'Snimanje…' : 'Snimi promjene'}
+            {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       </header>
@@ -128,9 +129,9 @@ export default function SettingsPage() {
       {error && <p className="rounded-lg bg-loss/5 px-4 py-2 text-sm text-loss">{error}</p>}
 
       <div className="rounded-xl border border-warn/30 bg-warn/5 px-4 py-3 text-xs text-warn">
-        <strong>Tajne (MT5 lozinka, Anthropic API ključ, Supabase service key) se NE unose ovdje</strong> — one žive
-        isključivo u <code>.env</code> fajlovima na serverima (vidi <code>docs/SETUP.md</code>). Ova stranica čuva samo
-        konfiguraciju i ID-jeve.
+        <strong>Secrets (MT5 password, Anthropic API key, Supabase service key) are NOT entered here</strong> — they live
+        only in <code>.env</code> files on the servers (see <code>docs/SETUP.md</code>). This page stores configuration
+        and IDs only.
       </div>
 
       {SECTIONS.map((s) => (
