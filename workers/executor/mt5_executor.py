@@ -88,9 +88,14 @@ def current_price(connection: Any, symbol: str) -> tuple[float, float] | None:
     return float(price["bid"]), float(price["ask"])
 
 
-def account_equity(connection: Any) -> tuple[float, float]:
-    info = connection.terminal_state.account_information or {}
-    return float(info.get("balance", 0.0)), float(info.get("equity", 0.0))
+def account_equity(connection: Any) -> tuple[float, float] | None:
+    """Vraca None ako terminal_state cache nije (jos) popunjen — desync/reconnect
+    hiccup daje account_information=None, sto NE znaci balance 0; nikad ne pisi
+    lazan nula-snapshot u equity_snapshots."""
+    info = connection.terminal_state.account_information
+    if not info or info.get("balance") is None:
+        return None
+    return float(info["balance"]), float(info.get("equity", info["balance"]))
 
 
 def positions_for_symbol(connection: Any, symbol: str) -> list[dict]:
@@ -185,7 +190,11 @@ async def open_new_signal(connection: Any, signal: dict, settings: dict) -> None
             caution_cut = 0.5  # u rasponu tolerancije, ali smanji lot
 
     # --- 3) daily loss limit + max positions
-    balance, equity = account_equity(connection)
+    eq = account_equity(connection)
+    if eq is None:
+        skip(signal, "Terminal state nije sinhronizovan (nema account_information) — preskačem dok se ne stabilizuje.")
+        return
+    balance, equity = eq
     if daily_loss_exceeded(risk, balance):
         skip(signal, "Dnevni max gubitak dosegnut — bot pauziran do sutra.")
         notify("🛑 <b>Dnevni limit gubitka dosegnut.</b> Bot ne otvara nove pozicije do sutra.")
@@ -437,10 +446,15 @@ async def main() -> None:
 
             # 4) equity snapshot
             if time.time() - last_snapshot > EQUITY_SNAPSHOT_EVERY:
-                balance, equity = account_equity(connection)
-                sb().table("equity_snapshots").insert({
-                    "balance": balance, "equity": equity, "open_pnl": equity - balance,
-                }).execute()
+                eq = account_equity(connection)
+                if eq is None:
+                    log("Terminal state nije sinhronizovan — snapshot preskocen (ne pisem lazan 0).",
+                        level="warn", category="executor")
+                else:
+                    balance, equity = eq
+                    sb().table("equity_snapshots").insert({
+                        "balance": balance, "equity": equity, "open_pnl": equity - balance,
+                    }).execute()
                 last_snapshot = time.time()
 
             heartbeat("executor")
