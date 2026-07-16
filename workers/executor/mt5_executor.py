@@ -105,10 +105,19 @@ def positions_for_signal(connection: Any, ref_id: str) -> list[dict]:
 
 # ---------------------------------------------------------------- risk (nepromijenjeno — MetaApi ne dira ovu logiku)
 def compute_lot(equity: float, sl_distance: float, risk: dict, multiplier: float) -> float:
-    """lot = rizik_$ / (SL_distance_$ * 100) za XAUUSD."""
+    """lot = rizik_$ / (SL_distance_$ * 100) za XAUUSD.
+
+    Rizik po signalu = manji od (equity x risk_percent) i max_risk_usd caps.
+    max_risk_usd je tvrdi $ cap: koliko se najvise gubi ako SL udari — stiti
+    budzet nezavisno od velicine racuna (0 = cap iskljucen).
+    """
     if sl_distance <= 0:
         return 0.0
-    risk_usd = equity * float(risk["risk_percent"]) / 100.0 * multiplier
+    risk_usd = equity * float(risk["risk_percent"]) / 100.0
+    max_risk = float(risk.get("max_risk_usd", 0) or 0)
+    if max_risk > 0:
+        risk_usd = min(risk_usd, max_risk)
+    risk_usd *= multiplier
     lot = risk_usd / (sl_distance * 100.0)
     lot = math.floor(lot * 100) / 100.0  # floor na 0.01 — nikad round-up
     return max(min(lot, float(risk["lot_cap"])), 0.0)

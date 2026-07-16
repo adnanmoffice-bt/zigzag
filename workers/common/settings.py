@@ -10,6 +10,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "min_confidence": 0.75, "slippage_max_usd": 1.0, "entry_mode": "smart",
         "breakeven_after_tp1": True, "split_equal_per_tp": True,
         "lot_floor": 0.01, "lot_cap": 1.0,
+        "max_risk_usd": 80.0,  # tvrdi cap: max $ gubitka po signalu ako SL udari (0 = iskljuceno)
     },
     "mt5": {
         "login": "", "server": "IG-Live2", "symbol": "XAUUSD", "symbol_suffix": "",

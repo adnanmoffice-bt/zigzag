@@ -54,6 +54,7 @@ const SECTIONS: {
     sub: 'Pravila koja executor primjenjuje na svaki signal',
     fields: [
       { name: 'risk_percent', label: 'Rizik po trejdu (%)', type: 'number', hint: 'preporuka 0.5 za start' },
+      { name: 'max_risk_usd', label: 'Max rizik po signalu ($)', type: 'number', hint: 'tvrdi cap gubitka ako SL udari — npr. 80; 0 = isključeno' },
       { name: 'daily_max_loss_percent', label: 'Dnevni max gubitak (%)', type: 'number', hint: 'bot staje kad se dosegne' },
       { name: 'max_open_positions', label: 'Max otvorenih pozicija', type: 'number' },
       { name: 'min_confidence', label: 'Min. confidence parsera (0–1)', type: 'number', hint: 'ispod ovoga → skip' },
