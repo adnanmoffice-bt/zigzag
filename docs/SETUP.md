@@ -91,6 +91,29 @@ EnvironmentFile=/opt/zigzag/workers/.env
 WantedBy=multi-user.target
 ```
 
+### 4.0 Railway deployment (preporučeno za 24/7 — svi workeri, ~$5/mj)
+
+`workers/Dockerfile` pokriva sva tri procesa — jedan image, tri servisa sa razlicitim
+start komandama.
+
+1. [railway.app](https://railway.app) → **New Project → Deploy from GitHub repo** → izaberi `zigzag`.
+2. Za svaki worker napravi **poseban servis** iz istog repo-a (New → GitHub Repo → isti repo):
+   - Service Settings → **Root Directory: `workers`** (Railway tada nadje Dockerfile).
+   - Settings → Deploy → **Custom Start Command**:
+     - servis 1 (listener): `python -m listener.telegram_listener`
+     - servis 2 (parser): `python -m parser.claude_parser`
+     - servis 3 (executor): `python -m executor.mt5_executor`
+3. Project → **Shared Variables** → dodaj SVE iz `workers/.env` (SUPABASE_URL,
+   SUPABASE_SERVICE_KEY, ANTHROPIC_API_KEY, MT5_PASSWORD, METAAPI_TOKEN,
+   TELEGRAM_SESSION_STRING) — pa ih u svakom servisu povezi (Variables → Shared).
+4. Deploy. Zivost pratis na dashboardu (sidebar tackice) — heartbeat iz Railway-a
+   radi isto kao lokalno.
+
+**VAZNO — samo JEDNA instanca svakog workera smije raditi.** Prije Railway deploya
+ugasi lokalne procese: dva parsera bi dupli-procesirala iste poruke (race na
+parse_status), dva listenera bi se oslanjala samo na dedupe. Executor pogotovo —
+dvije instance bi duplirale ordere.
+
 ### 4.1 Backfill istorije (jednokratno — preporučeno!)
 ```bash
 python -m backfill.backfill_history     # povuce cijelu istoriju kanala
