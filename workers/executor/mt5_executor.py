@@ -392,6 +392,29 @@ async def sync_closed_positions(connection: Any, settings: dict) -> None:
             log(f"Pozicija #{ticket} zatvorena: {profit:+.2f}$", level="trade", category="executor")
 
 
+RESYNC_AFTER_SECONDS = 60  # koliko dugo tolerisemo unsynced terminal_state prije forsiranog reconnect-a
+
+
+async def reconnect(settings: dict, old_connection: Any | None) -> Any | None:
+    """MetaApi streaming websocket povremeno puca (ConnectionTerminated) i SDK ga
+    ne sinhronizuje uvijek nazad sam od sebe — terminal_state ostane zauvijek
+    prazan (account_equity/positions/current_price vracaju None), sto tiho
+    zaustavi sve nove trejdove i azuriranje pozicija bez pravog crasha. Zato
+    pravimo potpuno novu konekciju umjesto da cekamo SDK da se sam oporavi."""
+    if old_connection is not None:
+        try:
+            await old_connection.close()
+        except Exception:
+            pass
+    new_connection = await mt5_connect(settings)
+    if new_connection is not None:
+        log("MetaApi konekcija ponovo uspostavljena.", category="executor")
+        notify("🔄 <b>MetaApi konekcija ponovo uspostavljena</b> nakon desync-a.")
+    else:
+        log("Reconnect na MetaApi nije uspio — pokusavam opet sljedeci ciklus.", level="error", category="executor")
+    return new_connection
+
+
 # ---------------------------------------------------------------- main loop
 async def main() -> None:
     settings = get_settings()
@@ -404,9 +427,23 @@ async def main() -> None:
     notify(f"🤖 <b>Executor pokrenut</b> ({mode} · {settings['mt5']['server']})")
 
     last_snapshot = 0.0
+    unsynced_since: float | None = None
     while True:
         try:
             settings = get_settings()
+
+            if not connection.synchronized:
+                if unsynced_since is None:
+                    unsynced_since = time.time()
+                    log("Terminal state je nesinhronizovan — cekam da se SDK sam oporavi.",
+                        level="warn", category="executor")
+                elif time.time() - unsynced_since > RESYNC_AFTER_SECONDS:
+                    new_connection = await reconnect(settings, connection)
+                    if new_connection is not None:
+                        connection = new_connection
+                    unsynced_since = None if new_connection is not None else time.time()
+            else:
+                unsynced_since = None
 
             if kill_switch_on():
                 heartbeat("executor", status="degraded", meta={"kill_switch": True})

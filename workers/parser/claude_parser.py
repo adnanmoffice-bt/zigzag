@@ -85,27 +85,44 @@ def get_unparsed(text_col: str, provider_col: str, status_col: str, limit: int =
 
     external_signals je tabela DIJELJENA sa drugim (stariji) pipelineom koji
     ima CHECK constraint na parse_status (dozvoljava samo pending/parsed/
-    unparseable) — pisanje 'zz_parsed'/'zz_error' tamo UVIJEK puca (23514) i
-    bilo je silent-swallowed, sto je izazvalo beskonacnu re-obradu istih redova
-    i spaljivanje Anthropic budzeta. Zato je ZigZag "obradio ovo" sad utvrdjeno
-    iskljucivo kroz postojanje reda u parsed_signals.external_signal_id — ne
-    diramo tudju parse_status kolonu nikako.
+    unparseable) — pisanje 'zz_parsed'/'zz_error' tamo UVIJEK puca (23514).
+    Zato ZigZag koristi SVOJU kolonu zz_seen_at (migracija 004) da obiljezi
+    "ovo sam vec obradio" — ne diramo tudju parse_status kolonu nikako.
+
+    Prije migracije 004 (dok zz_seen_at ne postoji) fallback je anti-join na
+    parsed_signals.external_signal_id — ali PAZI: "pending" u parse_status
+    ostaje pending zauvijek, pa bez zz_seen_at kolone kandidat-prozor mora biti
+    veliki (vidi git historiju) da ne ostane zaglavljen na davno-gotovim
+    redovima i nikad ne stigne do stvarno novih poruka (desilo se 16-17.7.2026).
     """
     try:
+        q = (
+            sb().table("external_signals")
+            .select(f"id,{text_col},{provider_col},created_at")
+            .is_("zz_seen_at", "null")
+            .order("created_at", desc=False)
+            .limit(limit)
+        )
+        return q.execute().data or []
+    except Exception as e:
+        if "zz_seen_at" not in str(e):
+            log(f"Ne mogu citati external_signals ({e}). Provjeri mapiranje kolona u Postavkama.",
+                level="error", category="parser")
+            return []
+        # zz_seen_at kolona jos ne postoji (migracija 004 nije pokrenuta) — fallback
+        log("Migracija 004 (external_signals.zz_seen_at) nije pokrenuta — koristim spori fallback anti-join.",
+            level="warn", category="parser")
         candidates = (
             sb().table("external_signals")
             .select(f"id,{text_col},{provider_col},created_at")
             .or_(f"{status_col}.is.null,{status_col}.eq.pending,{status_col}.eq.new")
             .order("created_at", desc=False)
-            .limit(limit * 5)
-            .execute()
-            .data
+            .limit(2000)
+            .execute().data
         ) or []
         if not candidates:
             return []
         ids = [r["id"] for r in candidates]
-        # explicitni limit: PostgREST default (1000) bi mogao odsjeci "done" redove
-        # kad isti external_signal_id ima puno duplikata — vidi migraciju 003.
         done_rows = (
             sb().table("parsed_signals").select("external_signal_id")
             .in_("external_signal_id", ids)
@@ -113,12 +130,19 @@ def get_unparsed(text_col: str, provider_col: str, status_col: str, limit: int =
             .execute().data
         ) or []
         done_ids = {d["external_signal_id"] for d in done_rows}
-        fresh = [r for r in candidates if r["id"] not in done_ids]
-        return fresh[:limit]
-    except Exception as e:
-        log(f"Ne mogu citati external_signals ({e}). Provjeri mapiranje kolona u Postavkama.",
-            level="error", category="parser")
-        return []
+        return [r for r in candidates if r["id"] not in done_ids][:limit]
+
+
+def mark_seen(external_id: str) -> None:
+    """ZigZag-only marker — vidi get_unparsed(). Best-effort: ako migracija 004
+    nije pokrenuta kolona ne postoji, u redu je (fallback anti-join i dalje radi,
+    samo sporije)."""
+    try:
+        sb().table("external_signals").update(
+            {"zz_seen_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", external_id).execute()
+    except Exception:
+        pass
 
 
 def insert_parsed_signal(record: dict) -> None:
@@ -224,12 +248,20 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
             "message_type": "noise", "decision": "skip", "decision_reason": "Prazan tekst poruke.",
             "raw_text": "", "tps": [], "confidence": 1.0, "processed_at": None,
         })
+        mark_seen(row["id"])
         return
 
     model = settings["anthropic"]["model"]
     max_tokens = int(settings["anthropic"].get("max_tokens", 1024))
 
-    parsed = call_claude(client, model, max_tokens, raw_text)
+    try:
+        parsed = call_claude(client, model, max_tokens, raw_text)
+    except Exception as e:
+        # tranzijentno (rate limit, kredit, mreza) — NE markiraj kao vidjeno,
+        # pokusaj opet sljedeci ciklus umjesto da poruka propadne zauvijek.
+        log(f"Claude API greska (poruka ostaje u redu, pokusa opet): {e}",
+            level="error", category="parser", meta={"external_id": row["id"]})
+        return
     if not parsed:
         log("Claude nije vratio tool poziv", level="error", category="parser", meta={"external_id": row["id"]})
         insert_parsed_signal({
@@ -237,6 +269,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
             "message_type": "noise", "decision": "skip", "decision_reason": "Claude parse greska — vidi activity log.",
             "raw_text": raw_text[:4000], "tps": [], "confidence": 0.0, "processed_at": None,
         })
+        mark_seen(row["id"])
         return
 
     ref = None
@@ -264,6 +297,7 @@ def process_row(client: anthropic.Anthropic, row: dict, settings: dict, text_col
         "processed_at": None,  # executor upisuje kad obradi follow-up (queue marker, vidi migraciju 002)
     }
     insert_parsed_signal(record)
+    mark_seen(row["id"])
 
     if parsed["message_type"] == "new_signal":
         log(
